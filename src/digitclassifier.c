@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <math.h>
 #include <sys/time.h>
+#include <string.h>
 
 #include "digitclassifier.h"
+#include "getmnist.h"
 
 double activation_neurons[NUM_ACTIVATION_NEURONS];
 double activation_weights[NUM_LAYER0_NEURONS][NUM_ACTIVATION_NEURONS];
@@ -20,12 +22,29 @@ int layer1_biases[NUM_OUTPUT_NEURONS];
 double output_neurons[NUM_OUTPUT_NEURONS];
 
 
-int main() {
-    randomize_network();
-    randomize_activations();
-    compute_network();
+int count;
 
-    printf("%d\n", read_output());
+int main(int argc, char *argv[]) {
+    MnistImage *dataset;
+    char* images_loc;
+    char* labels_loc;
+
+    if (argc == 5) {
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--images-loc") == 0) {
+                images_loc = argv[i+1];
+            } else if (strcmp(argv[i], "--labels-loc") == 0) {
+                labels_loc = argv[i+1];
+            }
+        }
+    } else {
+        printf("Not correct args\n");
+        return 1;
+    }
+    dataset = load_mnist(images_loc, labels_loc, &count);
+
+    backpropagation(dataset);
+    test(dataset[0]);
 
     return 0;
 }
@@ -42,19 +61,14 @@ void compute_network() {
     }
 }
 
-double logistic(double x) {
-    return 1 / (1 + exp(x * -1));
-}
+double logistic(double x) { return 1.0 / (1.0 + exp(-x)); }
+double dlogistic(double x) { return exp(x) / (pow(1+exp(x), 2)); }
 
 double dot(double* vector0, double* vector1, int vector_length) {
     double sum = 0;
-    double c = 0;
 
     for (int i = 0; i < vector_length; i++) {
-        double y = vector0[i] + vector1[i] - c;
-        double t = sum + y;
-        c = (t - sum) - y;
-        sum = t;
+        sum += vector0[i] * vector1[i];
     }
 
     return sum;
@@ -62,7 +76,7 @@ double dot(double* vector0, double* vector1, int vector_length) {
 
 int read_output() {
     int highest = 0;
-    for (int i = 1; i < NUM_OUTPUT_NEURONS; i++) {
+    for (int i = 0; i < NUM_OUTPUT_NEURONS; i++) {
         if (output_neurons[i] > output_neurons[highest]) {
             highest = i;
         }
@@ -79,6 +93,10 @@ void randomize_network() {
             srand(tv.tv_usec);
             activation_weights[y][x] = (double) rand() / (double) RAND_MAX;
         }
+        struct timeval tv;
+        gettimeofday(&tv,NULL);
+        srand(tv.tv_usec);
+        activation_biases[y] = ((double) rand() / (double) RAND_MAX) * NUM_LAYER0_NEURONS;
     }
     for (int y = 0; y < NUM_LAYER1_NEURONS; y++) {
         for (int x = 0; x < NUM_LAYER0_NEURONS; x++) {
@@ -87,6 +105,11 @@ void randomize_network() {
             srand(tv.tv_usec);
             layer0_weights[y][x] = (double) rand() / (double) RAND_MAX;
         }
+        struct timeval tv;
+        gettimeofday(&tv,NULL);
+        srand(tv.tv_usec);
+        layer0_biases[y] = ((double) rand() / (double) RAND_MAX) * NUM_LAYER1_NEURONS;
+
     }
     for (int y = 0; y < NUM_OUTPUT_NEURONS; y++) {
         for (int x = 0; x < NUM_LAYER1_NEURONS; x++) {
@@ -95,6 +118,10 @@ void randomize_network() {
             srand(tv.tv_usec);
             layer1_weights[y][x] = (double) rand() / (double) RAND_MAX;
         }
+        struct timeval tv;
+        gettimeofday(&tv,NULL);
+        srand(tv.tv_usec);
+        layer1_biases[y] = ((double) rand() / (double) RAND_MAX) * NUM_OUTPUT_NEURONS;
     }
 }
 
@@ -105,4 +132,72 @@ void randomize_activations() {
         srand(tv.tv_usec);
         activation_neurons[i] = (double) rand() / (double) RAND_MAX;
     }
+}
+
+double cost(MnistImage image) {
+    double correct[NUM_OUTPUT_NEURONS];
+    for (int i = 0; i < NUM_OUTPUT_NEURONS; i++) {
+        correct[i] = (double) 0;
+    }
+    correct[image.digit] = (double) 1;
+
+    double sum = (double) 0;
+    for (int i = 0; i < NUM_OUTPUT_NEURONS; i++) {
+        sum += pow((output_neurons[i] - correct[i]), 2.0);
+    }
+
+    return sum;
+}
+
+void backpropagate(MnistImage image) {
+    double correct[NUM_OUTPUT_NEURONS];
+    for (int i = 0; i < NUM_OUTPUT_NEURONS; i++) {
+        correct[i] = (double) 0;
+    }
+    correct[image.digit] = (double) 1;
+
+    for (int h = 0; h < NUM_LAYER1_NEURONS; h++) {
+        for (int i = 0; i < NUM_OUTPUT_NEURONS; i++) {
+            layer1_weights[i][h] -= layer1_neurons[h] * dlogistic(dot(layer1_neurons, layer1_weights[i], NUM_LAYER1_NEURONS) - layer1_biases[i]) * 2 * (output_neurons[i] - correct[i]);
+        }
+    }
+
+    for (int h = 0; h < NUM_LAYER0_NEURONS; h++) {
+        for (int i = 0; i < NUM_LAYER1_NEURONS; i++) {
+            layer0_weights[i][h] -= layer0_neurons[h] * dlogistic(dot(layer0_neurons, layer0_weights[i], NUM_LAYER0_NEURONS) - layer0_biases[i]) * 2 * (layer1_neurons[i] - output_neurons[i]);
+        }
+    }
+
+    for (int h = 0; h < NUM_ACTIVATION_NEURONS; h++) {
+        for (int i = 0; i < NUM_LAYER0_NEURONS; i++) {
+            activation_weights[i][h] -= activation_neurons[h] * dlogistic(dot(activation_neurons, activation_weights[i], NUM_ACTIVATION_NEURONS) - activation_biases[i]) * 2 * (layer0_neurons[i] - layer1_neurons[i]);
+        }
+    }
+}
+
+void load_backpropagate(MnistImage image) {
+    imgcpy(activation_neurons, image.image);
+    compute_network();
+    backpropagate(image);
+    printf("Cost: %lf\n", cost(image));
+}
+
+void backpropagation(MnistImage* images) {
+    randomize_network();
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    srand(tv.tv_usec);
+    for (int i = 0; i < 500; i++) {
+        int random_image = rand() % count;
+        printf("Iteration %d, Image %d, Random Number: %d, ", i, images[random_image].digit, random_image);
+        load_backpropagate(images[random_image]);
+    }
+}
+
+void test(MnistImage image) {
+    imgcpy(activation_neurons, image.image);
+    compute_network();
+    printf("Correct number: %d\n", image.digit);
+    printf("Predicted number: %d\n", read_output());
+    printf("Cost: %lf\n", cost(image));
 }
